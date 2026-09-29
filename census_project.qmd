@@ -166,3 +166,22 @@ get_census <- function(year = 2024,num_vars = c("AGEP", "PWGTP"),cat_vars = "SEX
   class(census_data) <- c("census", class(census_data))
   census_data}
 ```
+
+```{r}
+get_census()
+```
+
+```{r}
+get_multiple_years <- function(years = 2024, ...) {
+  census_list <- lapply(years, function(yr) {
+    get_census(year = yr, ...) |>
+      mutate(year = factor(yr))
+  })
+  combined <- bind_rows(census_list)
+  class(combined) <- unique(c("census", class(combined)))
+  combined
+}
+
+
+get_multiple_years(years = c(2021, 2024), num_vars = "AGEP", cat_vars = "SEX")
+```
