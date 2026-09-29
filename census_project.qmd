@@ -14,7 +14,7 @@ library(tidyverse)
 library(httr)
 library(jsonlite)
 library(lubridate)
-
+key='22ed3d09024ef521cea2e25a7b7c85d8283e2ccc'
 ```
 
 ```{r}
@@ -39,4 +39,61 @@ names(pums_vars) <- years
 
 dir.create("data", showWarnings = FALSE)
 saveRDS(pums_vars, "data/pums_vars.rds")
+
+
+pums_vars[["2024"]]$SEX
+```
+
+```{r}
+example_url <- paste0("https://api.census.gov/data/2024/acs/acs1/pums?get=SEX,PWGTP,AGEP&for=state:37",
+                      "&key=",key)
+response <- GET(example_url)
+parsed <- fromJSON(rawToChar(response$content))
+head(parsed)
+```
+
+```{r}
+api_to_tibble <- function(response) {
+  parsed <- fromJSON(rawToChar(response$content))
+  colnames(parsed) <- parsed[1, ]
+  as_tibble(parsed[-1, , drop = FALSE])
+}
+
+api_to_tibble(response)
+```
+
+```{r}
+time_midpoint <- function(labels) {
+  labels <- gsub("a\\.m\\.", "AM", labels)
+  labels <- gsub("p\\.m\\.", "PM", labels)
+  parts <- strsplit(labels, " to ")
+  start <- parse_date_time(sapply(parts, `[`, 1), "I:M p", quiet = TRUE)
+  end <- parse_date_time(sapply(parts, `[`, 2), "I:M p", quiet = TRUE)
+  
+  wraps <- which(end < start)
+  end[wraps] <- end[wraps] + days(1)
+  
+  hms::as_hms(start + (end - start) / 2)
+}
+
+convert_numeric <- function(x, values) {
+  x <- as.numeric(x)
+  if (is.character(values)) {
+    na_codes <- names(values)[grepl("^N/A|suppressed", values, ignore.case = TRUE)]
+    x[x %in% as.numeric(na_codes)] <- NA
+  }
+  x
+}
+
+convert_time <- function(x, values) {
+  midpoints <- time_midpoint(values)
+  midpoints[match(as.numeric(x), as.numeric(names(values)))]
+}
+
+convert_factor <- function(x, values) {
+  codes <- suppressWarnings(as.numeric(names(values)))
+  labels <- values[order(codes)]
+  factor(values[match(suppressWarnings(as.numeric(x)), codes)],
+         levels = unique(labels))
+}
 ```
