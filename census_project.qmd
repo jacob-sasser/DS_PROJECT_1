@@ -97,3 +97,72 @@ convert_factor <- function(x, values) {
          levels = unique(labels))
 }
 ```
+
+```{r}
+get_census <- function(year = 2024,num_vars = c("AGEP", "PWGTP"),cat_vars = "SEX",geography = "State",geo_values = NULL){
+  if (length(year) != 1 || !(year %in% 2021:2024)) {
+    stop("year must be a single value: 2021, 2022, 2023, or 2024")
+  }
+  
+  num_options <- c("AGEP", "GASP", "GRPIP", "JWAP", "JWDP", "JWMNP", "PWGTP")
+  num_vars <- unique(c("PWGTP", num_vars))
+  if (!all(num_vars %in% num_options)) {
+    stop("num_vars must come from: ", paste(num_options, collapse = ", "))
+  }
+  if (length(num_vars) < 2) {
+    stop("At least one numeric variable other than PWGTP must be returned")
+  }
+  
+  
+  cat_options <- c("FER", "HHL", "SCH", "SCHL", "SEX")
+  if (length(cat_vars) < 1 || !all(cat_vars %in% cat_options)) {
+    stop("At least one cat_var is required, chosen from: ",
+         paste(cat_options, collapse = ", "))
+  }
+  
+
+  if (length(geography) != 1 ||
+      !(tolower(geography) %in% c("state", "region", "division"))) {
+    stop("geography must be one of 'State', 'Region', or 'Division'")
+  }
+  geography <- tolower(geography)
+  
+
+  var_values <- readRDS("data/pums_vars.rds")[[as.character(year)]]
+  state_var <- if (year %in% c(2021, 2022)) "ST" else "STATE"
+  geo_var <- switch(geography, state = state_var,
+                    region = "REGION", division = "DIVISION")
+  
+  if (is.null(geo_values)) {
+    geo_values <- switch(geography, state = "37", region = "3", division = "5")
+  }
+ 
+  valid_geo <- setdiff(names(var_values[[geo_var]]), c("72", "9", "0"))
+  
+  if (identical(tolower(geo_values), "all")) {
+    geo_values <- "*"
+  } else if (!all(geo_values %in% valid_geo)) {
+    stop("Invalid geo_values. Options are: ", paste(valid_geo, collapse = ", "))
+  }
+  
+  url <- paste0("https://api.census.gov/data/", year, "/acs/acs1/pums?get=",
+                paste(c(num_vars, cat_vars), collapse = ","),
+                "&for=", geography, ":", paste(geo_values, collapse = ","),
+                "&key=", key)
+  census_data <- api_to_tibble(GET(url))
+  
+  for (var in num_vars) {
+    if (var %in% c("JWAP", "JWDP")) {
+      census_data[[var]] <- convert_time(census_data[[var]], var_values[[var]])
+    } else {
+      census_data[[var]] <- convert_numeric(census_data[[var]], var_values[[var]])
+    }
+  }
+  
+  for (var in cat_vars) {
+    census_data[[var]] <- convert_factor(census_data[[var]], var_values[[var]])
+  }
+  
+  class(census_data) <- c("census", class(census_data))
+  census_data}
+```
