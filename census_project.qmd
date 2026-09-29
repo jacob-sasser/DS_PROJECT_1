@@ -1,0 +1,42 @@
+---
+title: "Census Project"
+format: html
+editor: visual
+---
+
+## 
+
+Libraries
+
+```{r}
+#| echo: false
+library(tidyverse)
+library(httr)
+library(jsonlite)
+library(lubridate)
+
+```
+
+```{r}
+get_var_values <- function(year) {
+  url <- paste0("https://api.census.gov/data/", year,
+                "/acs/acs1/pums/variables.json")
+  parsed <- fromJSON(rawToChar(GET(url)$content))
+  
+  state_var <- if (year %in% c(2021, 2022)) "ST" else "STATE"
+  vars <- c("AGEP", "GASP", "GRPIP", "JWAP", "JWDP", "JWMNP", "PWGTP",
+            "FER", "HHL", "SCH", "SCHL", "SEX", state_var, "REGION", "DIVISION")
+  
+  lapply(parsed$variables[vars], function(v) {
+    if (!is.null(v$values$item)) unlist(v$values$item) else v$values$range
+  })
+}
+
+
+years <- 2021:2024
+pums_vars <- lapply(years, get_var_values)
+names(pums_vars) <- years
+
+dir.create("data", showWarnings = FALSE)
+saveRDS(pums_vars, "data/pums_vars.rds")
+```
