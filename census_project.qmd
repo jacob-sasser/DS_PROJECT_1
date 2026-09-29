@@ -185,3 +185,35 @@ get_multiple_years <- function(years = 2024, ...) {
 
 get_multiple_years(years = c(2021, 2024), num_vars = "AGEP", cat_vars = "SEX")
 ```
+
+PART 2
+
+```{r}
+summary.census <- function(object, num_vars = NULL, cat_vars = NULL, ...) {
+  if (is.null(num_vars)) {
+    num_vars <- setdiff(names(object)[sapply(object, is.numeric)], "PWGTP")
+  }
+  if (is.null(cat_vars)) {
+    cat_vars <- names(object)[sapply(object, is.factor)]
+  }
+  
+  weight <- object$PWGTP
+  results <- list()
+  
+  for (var in num_vars) {
+    keep <- !is.na(object[[var]])
+    x <- object[[var]][keep]
+    w <- weight[keep]
+    sample_mean <- sum(x * w) / sum(w)
+    sample_sd <- sqrt(sum(x^2 * w) / sum(w) - sample_mean^2)
+    results[[paste0(var, "_mean")]] <- sample_mean
+    results[[paste0(var, "_sd")]] <- sample_sd
+  }
+  
+  for (var in cat_vars) {
+    results[[paste0(var, "_counts")]] <- tapply(weight, object[[var]], sum)
+  }
+  
+  results
+}
+```
