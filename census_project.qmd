@@ -217,3 +217,14 @@ summary.census <- function(object, num_vars = NULL, cat_vars = NULL, ...) {
   results
 }
 ```
+
+```{r}
+plot.census <- function(x, cat_var, num_var, ...) {
+  if (missing(cat_var) || missing(num_var)) {
+    stop("Please specify one cat_var and one num_var")
+  }
+  ggplot(x, aes(x = get(cat_var), y = get(num_var), weight = PWGTP)) +
+    geom_boxplot() +
+    labs(x = cat_var, y = num_var)
+}
+```
