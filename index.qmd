@@ -76,6 +76,10 @@ api_to_tibble <- function(response) {
 api_to_tibble(response)
 ```
 
+Every column still comes back as a character string, so I need a few helper functions to convert to their proper data type.
+
+Time variables such as JWAP (arrival time at work) and JWDP (time of departure for work) are stored as intervals, so time_midpoint returns the midpoint. Labels that arent times are returned as NA.
+
 ```{r}
 time_midpoint <- function(labels) {
   labels <- gsub("a\\.m\\.", "AM", labels)
@@ -179,6 +183,8 @@ get_census <- function(year = 2024,num_vars = c("AGEP", "PWGTP"),cat_vars = "SEX
   
   class(census_data) <- c("census", class(census_data))
   census_data}
+
+
 ```
 
 ```{r}
