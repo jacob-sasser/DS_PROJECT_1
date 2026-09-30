@@ -78,7 +78,13 @@ api_to_tibble(response)
 
 Every column still comes back as a character string, so I need a few helper functions to convert to their proper data type.
 
-Time variables such as JWAP (arrival time at work) and JWDP (time of departure for work) are stored as intervals, so time_midpoint returns the midpoint. Labels that arent times are returned as NA.
+Time variables such as JWAP (arrival time at work) and JWDP (time of departure for work) are stored as intervals, so time_midpoint returns the midpoint. Labels that are not times are returned as NA.
+
+convert_numeric is a function that drops leading 0's. for instance: 001 gets returned as 1.
+
+convert_time converts arrival and departure codes to clock times.
+
+convert_factor turns dictionary codes into numbers. Sometimes the codes arent stored as numbers, this turns all codes into a number and then sorts them.
 
 ```{r}
 time_midpoint <- function(labels) {
@@ -114,7 +120,11 @@ convert_factor <- function(x, values) {
   factor(values[match(suppressWarnings(as.numeric(x)), codes)],
          levels = unique(labels))
 }
+
+
 ```
+
+Now, everything gets combined into one function, get_census. Get_census takes the year, the numeric and categorical variables, the geography level, and the specific geography values as parameters. It checks each input and returns an error if something is invalid. If no geography value is given, it defaults to North Carolina (state 37), the South (region 3), or the South Atlantic (division 5). Using "all" returns every value for that geography level.
 
 ```{r}
 get_census <- function(year = 2024,num_vars = c("AGEP", "PWGTP"),cat_vars = "SEX",geography = "State",geo_values = NULL){
@@ -187,9 +197,33 @@ get_census <- function(year = 2024,num_vars = c("AGEP", "PWGTP"),cat_vars = "SEX
 
 ```
 
+Here is the function using all default parameters.
+
 ```{r}
 get_census()
 ```
+
+Here is the function with non-default parameters.
+
+```{r}
+get_census(year = 2022, num_vars = c("JWMNP", "JWAP"),
+           cat_vars = c("SCHL", "SEX"), geography = "Division", geo_values = "1")
+```
+
+Here are some error messages for incorrect inputs.
+
+```{r}
+#| error: true
+get_census(year = 2019)
+get_census(num_vars = "PWGTP")
+get_census(cat_vars = "RAC1P")
+get_census(geography = "All")
+get_census(geography = "State", geo_values = "72")
+```
+
+### Combining Years
+
+The last function in part 1 allows the user to combine multiple years of data together in a single query. It has all of the parameters of get_census with an added years parameter that takes all of the years that are requested.
 
 ```{r}
 get_multiple_years <- function(years = 2024, ...) {
@@ -204,9 +238,14 @@ get_multiple_years <- function(years = 2024, ...) {
 
 
 get_multiple_years(years = c(2021, 2024), num_vars = "AGEP", cat_vars = "SEX")
+
 ```
 
-PART 2
+## Part 2: Generic Functions
+
+Each row in the dataset isn't a singular person, but multiple people, PWGTP tells us how many people, and it will be used as a weight. Since the tibbles use the census class, a generic summary() and plot() function can be created.
+
+the summary() method finds the weighted mean and standard deviation for each numeric variable, and the weighted counts for each categorical variable. The counts add up PWGTP, so they estimate the number of people in each group rather than the number of rows. Time variables and missing variables are skipped. The results are returned as a named list.
 
 ```{r}
 summary.census <- function(object, num_vars = NULL, cat_vars = NULL, ...) {
@@ -237,6 +276,8 @@ summary.census <- function(object, num_vars = NULL, cat_vars = NULL, ...) {
   results
 }
 ```
+
+The plot method needs one categorical variable and one numeric variable, and creates a boxplot of the numeric variable for each categorical variable, using weight = PWGTP so each row counts for the right number of people.
 
 ```{r}
 plot.census <- function(x, cat_var, num_var, ...) {
