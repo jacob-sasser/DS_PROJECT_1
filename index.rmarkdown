@@ -1,21 +1,30 @@
 ---
-title: "Census Project"
+title: "Querying and Summarizing US Census Data"
+author: "Jacob Sasser"
 format: html
 editor: visual
 ---
 
-## 
+## Introduction
+
+The US Census Bureau publishes the Public Use Microdata Sample (PUMS) database, which provides anyone with survey records via a public API. In this project, I will be creating functions to query the PUMS API, and then using the query results to investigate how rent prices vary across different factors.
 
 Libraries
 
 ```{r}
-#| echo: false
+
 library(tidyverse)
 library(httr)
 library(jsonlite)
 library(lubridate)
 key='22ed3d09024ef521cea2e25a7b7c85d8283e2ccc'
 ```
+
+## Part 1: Data Processing
+
+### Parsing Variable Values
+
+Before I can query the data, need to know what values each variable can take. Luckily, the API provides a json file that has all of the possible values of all the variables. the get_var_values function uses GET function to get the json for a specific year. Then, the json is filtered for all of the desired variables, and the result is saved into a .rds file for each year. As an example, the values for SEX are posted for 2024.
 
 ```{r}
 get_var_values <- function(year) {
@@ -44,12 +53,18 @@ saveRDS(pums_vars, "data/pums_vars.rds")
 pums_vars[["2024"]]$SEX
 ```
 
+## Parsing API Data
+
+As an example for how a query looks, I will query for someones sex, and age for north carolinians
+
 ```{r}
-example_url <- paste0("https://api.census.gov/data/2024/acs/acs1/pums?get=SEX,PWGTP,AGEP&for=state:37","&key=",key)
+example_url <- paste0("https://api.census.gov/data/2024/acs/acs1/pums?get=SEX,AGEP&for=state:37","&key=",key)
 response <- GET(example_url)
 parsed <- fromJSON(rawToChar(response$content))
 head(parsed)
 ```
+
+The result is a character matrix where the first row holds the column names. The helper function below turns what GET() returns into a tibble
 
 ```{r}
 api_to_tibble <- function(response) {
@@ -306,3 +321,4 @@ plot(new_england, cat_var = "state", num_var = "GRPIP") +
 ```
 
 The average GRPIP in New England is slightly higher than the average GRPIP in North Carolina, even though the rent in New England is more expensive then in NC. Looking at it on a state by state basis, Connecticut is the most burdened, with an upper quartile of 50%, while New Hampshire and Vermont are the least burdened.
+

@@ -1,0 +1,323 @@
+---
+title: "Querying and Summarizing US Census Data"
+author: "Jacob Sasser"
+format: html
+editor: visual
+---
+
+## Introduction
+
+The US Census Bureau publishes the Public Use Microdata Sample (PUMS) database, which provides anyone with survey records via a public API. In this project, I will be creating functions to query the PUMS API, and then using the query results to investigate how rent prices vary across different factors.
+
+Libraries
+
+```{r}
+
+library(tidyverse)
+library(httr)
+library(jsonlite)
+library(lubridate)
+key='22ed3d09024ef521cea2e25a7b7c85d8283e2ccc'
+```
+
+## Part 1: Data Processing
+
+### Parsing Variable Values
+
+Before I can query the data, need to know what values each variable can take. Luckily, the API provides a json file that has all of the possible values of all the variables. the get_var_values function uses GET function to get the json for a specific year. Then, the json is filtered for all of the desired variables, and the result is saved into a .rds file for each year. As an example, the values for SEX are posted for 2024.
+
+```{r}
+get_var_values <- function(year) {
+  url <- paste0("https://api.census.gov/data/", year,
+                "/acs/acs1/pums/variables.json")
+  parsed <- fromJSON(rawToChar(GET(url)$content))
+  
+  state_var <- if (year %in% c(2021, 2022)) "ST" else "STATE"
+  vars <- c("AGEP", "GASP", "GRPIP", "JWAP", "JWDP", "JWMNP", "PWGTP",
+            "FER", "HHL", "SCH", "SCHL", "SEX", state_var, "REGION", "DIVISION")
+  
+  lapply(parsed$variables[vars], function(v) {
+    if (!is.null(v$values$item)) unlist(v$values$item) else v$values$range
+  })
+}
+
+
+years <- 2021:2024
+pums_vars <- lapply(years, get_var_values)
+names(pums_vars) <- years
+
+dir.create("data", showWarnings = FALSE)
+saveRDS(pums_vars, "data/pums_vars.rds")
+
+
+pums_vars[["2024"]]$SEX
+```
+
+## Parsing API Data
+
+As an example for how a query looks, I will query for someones sex, and age for north carolinians
+
+```{r}
+example_url <- paste0("https://api.census.gov/data/2024/acs/acs1/pums?get=SEX,AGEP&for=state:37","&key=",key)
+response <- GET(example_url)
+parsed <- fromJSON(rawToChar(response$content))
+head(parsed)
+```
+
+The result is a character matrix where the first row holds the column names. The helper function below turns what GET() returns into a tibble
+
+```{r}
+api_to_tibble <- function(response) {
+  parsed <- fromJSON(rawToChar(response$content))
+  colnames(parsed) <- parsed[1, ]
+  as_tibble(parsed[-1, , drop = FALSE])
+}
+
+api_to_tibble(response)
+```
+
+```{r}
+time_midpoint <- function(labels) {
+  labels <- gsub("a\\.m\\.", "AM", labels)
+  labels <- gsub("p\\.m\\.", "PM", labels)
+  parts <- strsplit(labels, " to ")
+  start <- parse_date_time(sapply(parts, `[`, 1), "I:M p", quiet = TRUE)
+  end <- parse_date_time(sapply(parts, `[`, 2), "I:M p", quiet = TRUE)
+  
+  wraps <- which(end < start)
+  end[wraps] <- end[wraps] + days(1)
+  
+  hms::as_hms(start + (end - start) / 2)
+}
+
+convert_numeric <- function(x, values) {
+  x <- as.numeric(x)
+  if (is.character(values)) {
+    na_codes <- names(values)[grepl("^N/A|suppressed", values, ignore.case = TRUE)]
+    x[x %in% as.numeric(na_codes)] <- NA
+  }
+  x
+}
+
+convert_time <- function(x, values) {
+  midpoints <- time_midpoint(values)
+  midpoints[match(as.numeric(x), as.numeric(names(values)))]
+}
+
+convert_factor <- function(x, values) {
+  codes <- suppressWarnings(as.numeric(names(values)))
+  labels <- values[order(codes)]
+  factor(values[match(suppressWarnings(as.numeric(x)), codes)],
+         levels = unique(labels))
+}
+```
+
+```{r}
+get_census <- function(year = 2024,num_vars = c("AGEP", "PWGTP"),cat_vars = "SEX",geography = "State",geo_values = NULL){
+  if (length(year) != 1 || !(year %in% 2021:2024)) {
+    stop("year must be a single value: 2021, 2022, 2023, or 2024")
+  }
+  
+  num_options <- c("AGEP", "GASP", "GRPIP", "JWAP", "JWDP", "JWMNP", "PWGTP")
+  num_vars <- unique(c("PWGTP", num_vars))
+  if (!all(num_vars %in% num_options)) {
+    stop("num_vars must come from: ", paste(num_options, collapse = ", "))
+  }
+  if (length(num_vars) < 2) {
+    stop("At least one numeric variable other than PWGTP must be returned")
+  }
+  
+  
+  cat_options <- c("FER", "HHL", "SCH", "SCHL", "SEX")
+  if (length(cat_vars) < 1 || !all(cat_vars %in% cat_options)) {
+    stop("At least one cat_var is required, chosen from: ",
+         paste(cat_options, collapse = ", "))
+  }
+  
+
+  if (length(geography) != 1 ||
+      !(tolower(geography) %in% c("state", "region", "division"))) {
+    stop("geography must be one of 'State', 'Region', or 'Division'")
+  }
+  geography <- tolower(geography)
+  
+
+  var_values <- readRDS("data/pums_vars.rds")[[as.character(year)]]
+  state_var <- if (year %in% c(2021, 2022)) "ST" else "STATE"
+  geo_var <- switch(geography, state = state_var,
+                    region = "REGION", division = "DIVISION")
+  
+  if (is.null(geo_values)) {
+    geo_values <- switch(geography, state = "37", region = "3", division = "5")
+  }
+ 
+  valid_geo <- setdiff(names(var_values[[geo_var]]), c("72", "9", "0"))
+  
+  if (identical(tolower(geo_values), "all")) {
+    geo_values <- "*"
+  } else if (!all(geo_values %in% valid_geo)) {
+    stop("Invalid geo_values. Options are: ", paste(valid_geo, collapse = ", "))
+  }
+  
+  url <- paste0("https://api.census.gov/data/", year, "/acs/acs1/pums?get=",
+                paste(c(num_vars, cat_vars), collapse = ","),
+                "&for=", geography, ":", paste(geo_values, collapse = ","),
+                "&key=", key)
+  census_data <- api_to_tibble(GET(url))
+  
+  for (var in num_vars) {
+    if (var %in% c("JWAP", "JWDP")) {
+      census_data[[var]] <- convert_time(census_data[[var]], var_values[[var]])
+    } else {
+      census_data[[var]] <- convert_numeric(census_data[[var]], var_values[[var]])
+    }
+  }
+  
+  for (var in cat_vars) {
+    census_data[[var]] <- convert_factor(census_data[[var]], var_values[[var]])
+  }
+  
+  class(census_data) <- c("census", class(census_data))
+  census_data}
+```
+
+```{r}
+get_census()
+```
+
+```{r}
+get_multiple_years <- function(years = 2024, ...) {
+  census_list <- lapply(years, function(yr) {
+    get_census(year = yr, ...) |>
+      mutate(year = factor(yr))
+  })
+  combined <- bind_rows(census_list)
+  class(combined) <- unique(c("census", class(combined)))
+  combined
+}
+
+
+get_multiple_years(years = c(2021, 2024), num_vars = "AGEP", cat_vars = "SEX")
+```
+
+PART 2
+
+```{r}
+summary.census <- function(object, num_vars = NULL, cat_vars = NULL, ...) {
+  if (is.null(num_vars)) {
+    num_vars <- setdiff(names(object)[sapply(object, is.numeric)], "PWGTP")
+  }
+  if (is.null(cat_vars)) {
+    cat_vars <- names(object)[sapply(object, is.factor)]
+  }
+  
+  weight <- object$PWGTP
+  results <- list()
+  
+  for (var in num_vars) {
+    keep <- !is.na(object[[var]])
+    x <- object[[var]][keep]
+    w <- weight[keep]
+    sample_mean <- sum(x * w) / sum(w)
+    sample_sd <- sqrt(sum(x^2 * w) / sum(w) - sample_mean^2)
+    results[[paste0(var, "_mean")]] <- sample_mean
+    results[[paste0(var, "_sd")]] <- sample_sd
+  }
+  
+  for (var in cat_vars) {
+    results[[paste0(var, "_counts")]] <- tapply(weight, object[[var]], sum,default=0)
+  }
+  
+  results
+}
+```
+
+```{r}
+plot.census <- function(x, cat_var, num_var, ...) {
+  if (missing(cat_var) || missing(num_var)) {
+    stop("specify one cat_var and one num_var")
+  }
+  ggplot(x, aes(x = get(cat_var), y = get(num_var), weight = PWGTP)) +
+    geom_boxplot() +
+    labs(x = cat_var, y = num_var)
+}
+```
+
+## Investigation
+
+### Is rent getting less affordable?
+
+To test the functions that have been made for the PUMS database, we will be investigating how much of an individuals income is going to their rent in North Carolina, and how much that has changed from 2021 to 2024. We will also look at how rent differs in certain demographics. The GRPIP variable is gross rent as a percentage of income over the past 12 months. A household is considered rent-burdened at 30% of income is spent on rent.
+
+We will be querying all four years for NC, asking for rent burden(GRPIP), age (AGEP), household language(HHL), and sex.
+
+```{r}
+nc_rent <- get_multiple_years(years = 2021:2024,num_vars = c("GRPIP", "AGEP"),
+cat_vars = c("HHL", "SEX"),geography = "State",geo_values = "37")
+
+
+renters <- nc_rent |>
+  filter(!is.na(GRPIP))
+class(renters) <- unique(c("census", class(renters)))
+renters
+summary(renters)
+```
+
+Summary analysis: The average GRPIP of a North Carolinian is 36%, which classifies them as rent-burdened. Most renters are in english only households, but some are in spanish and other languages. The number of renters has increased every year.
+
+To see how the average changed over time, I run the summary on each year separately:
+
+```{r}
+for (yr in levels(renters$year)) {
+  one_year <- filter(renters, year == yr)
+  class(one_year) <- unique(c("census", class(one_year)))
+  cat("Year", yr, "- mean rent burden:",
+      round(summary(one_year, num_vars = "GRPIP", cat_vars = character(0))$GRPIP_mean, 1),
+      "% of income\n")
+}
+```
+
+The mean rent burden has not changed much over the past 4 years
+
+### Plots
+
+Rent burden by year. The dashed line marks the 30% threshold.
+
+```{r}
+plot(renters, cat_var = "year", num_var = "GRPIP") +
+  geom_hline(yintercept = 30, linetype = "dashed")
+```
+
+Rent burden by sex:
+
+```{r}
+plot(renters, cat_var = "SEX", num_var = "GRPIP") +
+  geom_hline(yintercept = 30, linetype = "dashed")
+```
+
+Women in renting households have a much higher rent burden than men, there is a 30% median for females and only a 26% median for males. The upper quartile for women is at 48% vs mens 42%.
+
+age by year among renters, to see if the renter population itself changed:
+
+```{r}
+plot(renters, cat_var = "year", num_var = "AGEP")
+
+```
+
+From 2021 to 2024, the average renter age did not have a significant change.
+
+###  Comparing States in New England
+
+To see how North Carolina compares with a high-cost area, and to test the Division geography, I pull 2024 rent data for the New England division
+
+```{r}
+new_england <- get_census(year = 2024, num_vars = "GRPIP", cat_vars = "HHL",
+                          geography = "State",
+                          geo_values = c("09", "23", "25", "33", "44", "50")) |>
+  filter(!is.na(GRPIP))
+summary(new_england)
+plot(new_england, cat_var = "state", num_var = "GRPIP") +
+  geom_hline(yintercept = 30, linetype = "dashed")
+```
+
+The average GRPIP in New England is slightly higher than the average GRPIP in North Carolina, even though the rent in New England is more expensive then in NC. Looking at it on a state by state basis, Connecticut is the most burdened, with an upper quartile of 50%, while New Hampshire and Vermont are the least burdened.
