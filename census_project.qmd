@@ -45,8 +45,7 @@ pums_vars[["2024"]]$SEX
 ```
 
 ```{r}
-example_url <- paste0("https://api.census.gov/data/2024/acs/acs1/pums?get=SEX,PWGTP,AGEP&for=state:37",
-                      "&key=",key)
+example_url <- paste0("https://api.census.gov/data/2024/acs/acs1/pums?get=SEX,PWGTP,AGEP&for=state:37","&key=",key)
 response <- GET(example_url)
 parsed <- fromJSON(rawToChar(response$content))
 head(parsed)
@@ -211,7 +210,7 @@ summary.census <- function(object, num_vars = NULL, cat_vars = NULL, ...) {
   }
   
   for (var in cat_vars) {
-    results[[paste0(var, "_counts")]] <- tapply(weight, object[[var]], sum)
+    results[[paste0(var, "_counts")]] <- tapply(weight, object[[var]], sum,default=0)
   }
   
   results
@@ -221,10 +220,89 @@ summary.census <- function(object, num_vars = NULL, cat_vars = NULL, ...) {
 ```{r}
 plot.census <- function(x, cat_var, num_var, ...) {
   if (missing(cat_var) || missing(num_var)) {
-    stop("Please specify one cat_var and one num_var")
+    stop("specify one cat_var and one num_var")
   }
   ggplot(x, aes(x = get(cat_var), y = get(num_var), weight = PWGTP)) +
     geom_boxplot() +
     labs(x = cat_var, y = num_var)
 }
 ```
+
+## Investigation
+
+### Is rent getting less affordable?
+
+To test the functions that have been made for the PUMS database, we will be investigating how much of an individuals income is going to their rent in North Carolina, and how much that has changed from 2021 to 2024. We will also look at how rent differs in certain demographics. The GRPIP variable is gross rent as a percentage of income over the past 12 months. A household is considered rent-burdened at 30% of income is spent on rent.
+
+We will be querying all four years for NC, asking for rent burden(GRPIP), age (AGEP), household language(HHL), and sex.
+
+```{r}
+nc_rent <- get_multiple_years(years = 2021:2024,num_vars = c("GRPIP", "AGEP"),
+cat_vars = c("HHL", "SEX"),geography = "State",geo_values = "37")
+
+
+renters <- nc_rent |>
+  filter(!is.na(GRPIP))
+class(renters) <- unique(c("census", class(renters)))
+renters
+summary(renters)
+```
+
+Summary analysis: The average GRPIP of a North Carolinian is 36%, which classifies them as rent-burdened. Most renters are in english only households, but some are in spanish and other languages. The number of renters has increased every year.
+
+To see how the average changed over time, I run the summary on each year separately:
+
+```{r}
+for (yr in levels(renters$year)) {
+  one_year <- filter(renters, year == yr)
+  class(one_year) <- unique(c("census", class(one_year)))
+  cat("Year", yr, "- mean rent burden:",
+      round(summary(one_year, num_vars = "GRPIP", cat_vars = character(0))$GRPIP_mean, 1),
+      "% of income\n")
+}
+```
+
+The mean rent burden has not changed much over the past 4 years
+
+### Plots
+
+Rent burden by year. The dashed line marks the 30% threshold.
+
+```{r}
+plot(renters, cat_var = "year", num_var = "GRPIP") +
+  geom_hline(yintercept = 30, linetype = "dashed")
+```
+
+Rent burden by sex:
+
+```{r}
+plot(renters, cat_var = "SEX", num_var = "GRPIP") +
+  geom_hline(yintercept = 30, linetype = "dashed")
+```
+
+Women in renting households have a much higher rent burden than men, there is a 30% median for females and only a 26% median for males. The upper quartile for women is at 48% vs mens 42%.
+
+age by year among renters, to see if the renter population itself changed:
+
+```{r}
+plot(renters, cat_var = "year", num_var = "AGEP")
+
+```
+
+From 2021 to 2024, the average renter age did not have a significant change.
+
+###  Comparing States in New England
+
+To see how North Carolina compares with a high-cost area, and to test the Division geography, I pull 2024 rent data for the New England division
+
+```{r}
+new_england <- get_census(year = 2024, num_vars = "GRPIP", cat_vars = "HHL",
+                          geography = "State",
+                          geo_values = c("09", "23", "25", "33", "44", "50")) |>
+  filter(!is.na(GRPIP))
+summary(new_england)
+plot(new_england, cat_var = "state", num_var = "GRPIP") +
+  geom_hline(yintercept = 30, linetype = "dashed")
+```
+
+The average GRPIP in New England is slightly higher than the average GRPIP in North Carolina, even though the rent in New England is more expensive then in NC. Looking at it on a state by state basis, Connecticut is the most burdened, with an upper quartile of 50%, while New Hampshire and Vermont are the least burdened.
